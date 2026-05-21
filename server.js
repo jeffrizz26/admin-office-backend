@@ -4,20 +4,20 @@ const cors = require('cors');
 
 const app = express();
 
-// 🔴 MALI 1: Naka-lock ang CORS mo sa localhost! Haharangin ito ni Vercel.
-// PINALITAN NATIN: Pinayagan natin ang Vercel frontend mo para makapasok ang data.
+// INAYOS NA: Pinayagan ang eksaktong live Vercel link ng frontend mo para hindi ka na i-block ng CORS browser security!
 app.use(cors({
   origin: [
     'http://localhost:5173',
     'http://localhost:5174',
-    'https://vercel.app' // Idinagdag ang live frontend URL mo
+    'https://admin-office-frontend.vercel.app'
   ],
   credentials: true
 }));
 
 app.use(express.json());
 
-const MONGO_URI = "mongodb://jeffrizz26:jeffrizzsl4y3r75@ac-ixyhns0-shard-00-00.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-01.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-02.zxke0zs.mongodb.net:27017/?ssl=true&replicaSet=atlas-owa68i-shard-0&authSource=admin&appName=AdminOfficeSystem";
+// INAYOS NA: Tinatawag na nito ang MONGO_URI variable mula sa Vercel Settings na ginawa natin kanina para sa secure at stable cloud storage connection!
+const MONGO_URI = process.env.MONGO_URI || "mongodb://jeffrizz26:jeffrizzsl4y3r75@ac-ixyhns0-shard-00-00.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-01.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-02.zxke0zs.mongodb.net:27017/?ssl=true&replicaSet=atlas-owa68i-shard-0&authSource=admin&appName=AdminOfficeSystem";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ Connected na tayo sa MongoDB Atlas!'))
@@ -95,6 +95,4 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
 
-// 🔴 MALI 2: Walang export sa dulo kaya nalilito si Vercel Serverless!
-// INILAGAY NA NATIN DITO:
 module.exports = app;
