@@ -4,16 +4,7 @@ const cors = require('cors');
 
 const app = express();
 
-// INAYOS NA: Pinayagan ang eksaktong live Vercel link ng frontend mo para hindi ka na i-block ng CORS browser security!
-app.use(cors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'https://admin-office-frontend.vercel.app'
-  ],
-  credentials: true
-}));
-
+app.use(cors());
 app.use(express.json());
 
 // INAYOS NA: Tinatawag na nito ang MONGO_URI variable mula sa Vercel Settings na ginawa natin kanina para sa secure at stable cloud storage connection!
