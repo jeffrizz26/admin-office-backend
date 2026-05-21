@@ -4,14 +4,20 @@ const cors = require('cors');
 
 const app = express();
 
+// 🔴 MALI 1: Naka-lock ang CORS mo sa localhost! Haharangin ito ni Vercel.
+// PINALITAN NATIN: Pinayagan natin ang Vercel frontend mo para makapasok ang data.
 app.use(cors({
-  origin: 'http://localhost:5174',
+  origin: [
+    'http://localhost:5173',
+    'http://localhost:5174',
+    'https://vercel.app' // Idinagdag ang live frontend URL mo
+  ],
   credentials: true
 }));
 
 app.use(express.json());
 
-const MONGO_URI = "mongodb://jeffrizz26:jeffrizz26sl4y3r75@ac-ixyhns0-shard-00-00.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-01.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-02.zxke0zs.mongodb.net:27017/?ssl=true&replicaSet=atlas-owa68i-shard-0&authSource=admin&appName=AdminOfficeSystem";
+const MONGO_URI = "mongodb://jeffrizz26:jeffrizzsl4y3r75@ac-ixyhns0-shard-00-00.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-01.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-02.zxke0zs.mongodb.net:27017/?ssl=true&replicaSet=atlas-owa68i-shard-0&authSource=admin&appName=AdminOfficeSystem";
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ Connected na tayo sa MongoDB Atlas!'))
@@ -33,29 +39,23 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
 
 // ==================== ENDPOINTS ====================
 
-// MATALINONG ROUTE PARA SA KUSA AT SUNOD-SUNOD NA TRACKING NUMBER FORMAT (YYYYMMDD-XXXX)
 app.post('/api/transactions', async (req, res) => {
   try {
     const ngayon = new Date();
     const taon = ngayon.getFullYear();
-    const buwan = String(ngayon.getMonth() + 1).padStart(2, '0'); // Nagiging '05' kung May
-    const araw = String(ngayon.getDate()).padStart(2, '0');      // Nagiging '20' kung ika-20 ng buwan
+    const buwan = String(ngayon.getMonth() + 1).padStart(2, '0'); 
+    const araw = String(ngayon.getDate()).padStart(2, '0');      
     
-    const datePrefix = `${taon}${buwan}${araw}`; // Halimbawa: "20260520"
+    const datePrefix = `${taon}${buwan}${araw}`; 
 
-    // Kukunin natin ang simula at dulo ng araw na ito para mabilang kung ilang transaksyon na ang nagawa ngayon
     const simulaNgAraw = new Date(ngayon.setHours(0,0,0,0));
     const duloNgAraw = new Date(ngayon.setHours(23,59,59,999));
 
-    // Bibilangin sa MongoDB kung ilan ang transaksyon na pumasok sa pagitan ng simula at dulo ng araw na ito
     const bilangNgayon = await Transaction.countDocuments({
       createdAt: { $gte: simulaNgAraw, $lte: duloNgAraw }
     });
 
-    // Ang susunod na bilang ay bilangNgayon + 1, at lalagyan ng leading zeros para maging 4 digits (-0001)
     const sunodNaBilang = String(bilangNgayon + 1).padStart(4, '0');
-    
-    // Pagsasamahin para sa pinal na format: "20260520-0001"
     const pinalNaTracking = `${datePrefix}-${sunodNaBilang}`;
 
     const transactionData = { ...req.body, trackingNumber: pinalNaTracking };
@@ -90,7 +90,11 @@ app.put('/api/transactions/:id', async (req, res) => {
   }
 });
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`🚀 Server running on port ${PORT}`);
 });
+
+// 🔴 MALI 2: Walang export sa dulo kaya nalilito si Vercel Serverless!
+// INILAGAY NA NATIN DITO:
+module.exports = app;
