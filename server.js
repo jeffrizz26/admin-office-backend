@@ -8,7 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 // INAYOS NA: Tinatawag na nito ang MONGO_URI variable mula sa Vercel Settings na ginawa natin kanina para sa secure at stable cloud storage connection!
-const MONGO_URI = process.env.MONGO_URI || "mongodb://jeffrizz26:jeffrizzsl4y3r75@ac-ixyhns0-shard-00-00.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-01.zxke0zs.mongodb.net:27017,ac-ixyhns0-shard-00-02.zxke0zs.mongodb.net:27017/?ssl=true&replicaSet=atlas-owa68i-shard-0&authSource=admin&appName=AdminOfficeSystem";
+const MONGO_URI = process.env.MONGO_URI;
 
 mongoose.connect(MONGO_URI)
   .then(() => console.log('✅ Connected na tayo sa MongoDB Atlas!'))
