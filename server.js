@@ -8,6 +8,7 @@ app.use(cors());
 app.use(express.json());
 
 const MONGO_URI = process.env.MONGO_URI;
+const ADMIN_SECRET_PASSWORD = '1234'; // Ang sikretong susi na dapat katugma ng nasa Frontend
 
 // SMART CONNECTION LOGIC: Iniwasan natin ang buffering para hindi mag-hang ang Vercel kapag galing sa cold start!
 let isConnected = false;
@@ -46,6 +47,7 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
 
 // ==================== ENDPOINTS ====================
 
+// 📄 PUBLIC ENDPOINT: Pwede mag-submit ang kahit sino kahit walang password
 app.post('/api/transactions', async (req, res) => {
   try {
     await connectDB(); // Siguraduhing gising ang koneksyon bago mag-bilang at mag-save
@@ -77,8 +79,17 @@ app.post('/api/transactions', async (req, res) => {
   }
 });
 
+// 📊 PROTECTED ENDPOINT: Para sa Admin Dashboard lang (Bawal ang walang tamang PIN)
 app.get('/api/transactions', async (req, res) => {
   try {
+    // 🔒 Tsek kung may dalang Authorization Token ang nagre-request
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Kinukuha ang password pagkatapos ng "Bearer "
+
+    if (!token || token !== ADMIN_SECRET_PASSWORD) {
+      return res.status(401).json({ success: false, message: '🔒 Unauthorized Access! Bawal pumasok ang walang tamang PIN.' });
+    }
+
     await connectDB(); // Siguraduhing gising ang koneksyon bago mag-pull ng listahan
     
     const list = await Transaction.find().sort({ createdAt: -1 });
@@ -88,8 +99,17 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
+// ⚙️ PROTECTED ENDPOINT: Para sa pag-update ng status (Bawal baguhin ng basta-basta)
 app.put('/api/transactions/:id', async (req, res) => {
   try {
+    // 🔒 Tsek kung may dalang Authorization Token ang nagre-request
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token || token !== ADMIN_SECRET_PASSWORD) {
+      return res.status(401).json({ success: false, message: '🔒 Unauthorized Access! Bawal baguhin ang status.' });
+    }
+
     await connectDB(); // Siguraduhing gising ang koneksyon bago mag-update ng status
     
     const updated = await Transaction.findByIdAndUpdate(
