@@ -8,7 +8,6 @@ app.use(cors());
 app.use(express.json());
 
 const MONGO_URI = process.env.MONGO_URI;
-const ADMIN_SECRET_PASSWORD = '1234'; 
 
 let isConnected = false;
 
@@ -24,6 +23,7 @@ const connectDB = async () => {
   }
 };
 
+// 1. Transaction Schema
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   trackingNumber: { type: String, unique: true },
   firstName: { type: String, required: true },
@@ -37,6 +37,35 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   status: { type: String, default: 'Pending' },
   createdAt: { type: Date, default: Date.now }
 }));
+
+// 2. Admin System Schema (Para dito i-save ang PIN nang ligtas)
+const SystemConfig = mongoose.model('SystemConfig', new mongoose.Schema({
+  key: { type: String, default: 'admin_config' },
+  adminPin: { type: String, default: '1234' } // Default PIN sa unang takbo
+}));
+
+// MIDDLEWARE: Dito tsetsekin ng server kung tama ang pin na pinasa ng phone/laptop mo
+const checkAuth = async (req, res, next) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+    
+    if (!token) return res.status(401).json({ success: false, message: '🔒 No token provided!' });
+    
+    await connectDB();
+    let config = await SystemConfig.findOne({ key: 'admin_config' });
+    if (!config) {
+      config = await SystemConfig.create({ key: 'admin_config', adminPin: '1234' });
+    }
+
+    if (token !== config.adminPin) {
+      return res.status(401).json({ success: false, message: '🔒 Unauthorized!' });
+    }
+    next();
+  } catch (error) {
+    res.status(500).json({ success: false, message: 'Server auth error' });
+  }
+};
 
 // ==================== ENDPOINTS ====================
 
@@ -71,15 +100,8 @@ app.post('/api/transactions', async (req, res) => {
 });
 
 // 📊 PROTECTED: Get All Transactions
-app.get('/api/transactions', async (req, res) => {
+app.get('/api/transactions', checkAuth, async (req, res) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token || token !== ADMIN_SECRET_PASSWORD) {
-      return res.status(401).json({ success: false, message: '🔒 Unauthorized!' });
-    }
-
-    await connectDB();
     const list = await Transaction.find().sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: list });
   } catch (error) {
@@ -88,15 +110,8 @@ app.get('/api/transactions', async (req, res) => {
 });
 
 // ⚙️ PROTECTED: Update Status
-app.put('/api/transactions/:id', async (req, res) => {
+app.put('/api/transactions/:id', checkAuth, async (req, res) => {
   try {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    if (!token || token !== ADMIN_SECRET_PASSWORD) {
-      return res.status(401).json({ success: false, message: '🔒 Unauthorized!' });
-    }
-
-    await connectDB();
     const updated = await Transaction.findByIdAndUpdate(
       req.params.id,
       { status: req.body.status },
@@ -105,6 +120,39 @@ app.put('/api/transactions/:id', async (req, res) => {
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// 🔑 PUBLIC: Verify PIN (Para sa Login ng Frontend)
+app.post('/api/admin/verify-pin', async (req, res) => {
+  try {
+    await connectDB();
+    const { pin } = req.body;
+    let config = await SystemConfig.findOne({ key: 'admin_config' });
+    if (!config) config = await SystemConfig.create({ key: 'admin_config', adminPin: '1234' });
+
+    if (pin === config.adminPin) {
+      res.status(200).json({ success: true, message: "Valid PIN" });
+    } else {
+      res.status(401).json({ success: false, message: "Maling PIN!" });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 🔒 PROTECTED: Change PIN sa Database (Sync sa lahat ng device)
+app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
+  try {
+    const { newPin } = req.body;
+    if (!newPin || newPin.length < 4) {
+      return res.status(400).json({ success: false, message: "Dapat kahit 4 digits ang PIN." });
+    }
+    await connectDB();
+    await SystemConfig.findOneAndUpdate({ key: 'admin_config' }, { adminPin: newPin });
+    res.status(200).json({ success: true, message: "PIN updated successfully!" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
