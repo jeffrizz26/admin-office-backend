@@ -8,25 +8,18 @@ app.use(cors());
 app.use(express.json());
 
 const MONGO_URI = process.env.MONGO_URI;
-const ADMIN_SECRET_PASSWORD = '1234'; // Ang sikretong susi na dapat katugma ng nasa Frontend
+const ADMIN_SECRET_PASSWORD = '1234'; 
 
-// SMART CONNECTION LOGIC: Iniwasan natin ang buffering para hindi mag-hang ang Vercel kapag galing sa cold start!
 let isConnected = false;
 
 const connectDB = async () => {
-  if (isConnected && mongoose.connection.readyState >= 1) {
-    return;
-  }
-  
+  if (isConnected && mongoose.connection.readyState >= 1) return;
   try {
-    await mongoose.connect(MONGO_URI, {
-      bufferCommands: false, // Bawal mag-antay ng 10 segundo kapag tulog ang database
-      serverSelectionTimeoutMS: 5000 // Pagkalipas ng 5 segundo, mag-reconnect agad imbes na mag-freeze
-    });
+    await mongoose.connect(MONGO_URI, { bufferCommands: false, serverSelectionTimeoutMS: 5000 });
     isConnected = true;
-    console.log('✅ Connected na tayo sa MongoDB Atlas!');
+    console.log('✅ Connected sa MongoDB!');
   } catch (err) {
-    console.error('❌ Oops, may error sa koneksyon:', err);
+    console.error('❌ MongoDB Connection Error:', err);
     throw err;
   }
 };
@@ -47,16 +40,14 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
 
 // ==================== ENDPOINTS ====================
 
-// 📄 PUBLIC ENDPOINT: Pwede mag-submit ang kahit sino kahit walang password
+// 📄 PUBLIC: Submit Transaction
 app.post('/api/transactions', async (req, res) => {
   try {
-    await connectDB(); // Siguraduhing gising ang koneksyon bago mag-bilang at mag-save
-
+    await connectDB();
     const ngayon = new Date();
     const taon = ngayon.getFullYear();
     const buwan = String(ngayon.getMonth() + 1).padStart(2, '0'); 
     const araw = String(ngayon.getDate()).padStart(2, '0');      
-    
     const datePrefix = `${taon}${buwan}${araw}`; 
 
     const simulaNgAraw = new Date(ngayon.setHours(0,0,0,0));
@@ -69,7 +60,7 @@ app.post('/api/transactions', async (req, res) => {
     const sunodNaBilang = String(bilangNgayon + 1).padStart(4, '0');
     const pinalNaTracking = `${datePrefix}-${sunodNaBilang}`;
 
-    const transactionData = { ...req.body, trackingNumber: pinalNaTracking };
+    const transactionData = { ...req.body, trackingNumber: pinalNaTracking, createdAt: new Date() };
     const newTx = new Transaction(transactionData);
     const saved = await newTx.save();
     
@@ -79,19 +70,16 @@ app.post('/api/transactions', async (req, res) => {
   }
 });
 
-// 📊 PROTECTED ENDPOINT: Para sa Admin Dashboard lang (Bawal ang walang tamang PIN)
+// 📊 PROTECTED: Get All Transactions
 app.get('/api/transactions', async (req, res) => {
   try {
-    // 🔒 Tsek kung may dalang Authorization Token ang nagre-request
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1]; // Kinukuha ang password pagkatapos ng "Bearer "
-
+    const token = authHeader && authHeader.split(' ')[1];
     if (!token || token !== ADMIN_SECRET_PASSWORD) {
-      return res.status(401).json({ success: false, message: '🔒 Unauthorized Access! Bawal pumasok ang walang tamang PIN.' });
+      return res.status(401).json({ success: false, message: '🔒 Unauthorized!' });
     }
 
-    await connectDB(); // Siguraduhing gising ang koneksyon bago mag-pull ng listahan
-    
+    await connectDB();
     const list = await Transaction.find().sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: list });
   } catch (error) {
@@ -99,19 +87,16 @@ app.get('/api/transactions', async (req, res) => {
   }
 });
 
-// ⚙️ PROTECTED ENDPOINT: Para sa pag-update ng status (Bawal baguhin ng basta-basta)
+// ⚙️ PROTECTED: Update Status
 app.put('/api/transactions/:id', async (req, res) => {
   try {
-    // 🔒 Tsek kung may dalang Authorization Token ang nagre-request
     const authHeader = req.headers['authorization'];
     const token = authHeader && authHeader.split(' ')[1];
-
     if (!token || token !== ADMIN_SECRET_PASSWORD) {
-      return res.status(401).json({ success: false, message: '🔒 Unauthorized Access! Bawal baguhin ang status.' });
+      return res.status(401).json({ success: false, message: '🔒 Unauthorized!' });
     }
 
-    await connectDB(); // Siguraduhing gising ang koneksyon bago mag-update ng status
-    
+    await connectDB();
     const updated = await Transaction.findByIdAndUpdate(
       req.params.id,
       { status: req.body.status },
@@ -125,9 +110,7 @@ app.put('/api/transactions/:id', async (req, res) => {
 
 if (process.env.NODE_ENV !== 'production') {
   const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => {
-    console.log(`🚀 Server running locally on port ${PORT}`);
-  });
+  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
 }
 
 module.exports = app;
