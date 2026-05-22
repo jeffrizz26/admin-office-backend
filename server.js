@@ -7,12 +7,28 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// INAYOS NA: Tinatawag na nito ang MONGO_URI variable mula sa Vercel Settings na ginawa natin kanina para sa secure at stable cloud storage connection!
 const MONGO_URI = process.env.MONGO_URI;
 
-mongoose.connect(MONGO_URI)
-  .then(() => console.log('✅ Connected na tayo sa MongoDB Atlas!'))
-  .catch((err) => console.error('❌ Oops, may error sa koneksyon:', err));
+// SMART CONNECTION LOGIC: Iniwasan natin ang buffering para hindi mag-hang ang Vercel kapag galing sa cold start!
+let isConnected = false;
+
+const connectDB = async () => {
+  if (isConnected && mongoose.connection.readyState >= 1) {
+    return;
+  }
+  
+  try {
+    await mongoose.connect(MONGO_URI, {
+      bufferCommands: false, // Bawal mag-antay ng 10 segundo kapag tulog ang database
+      serverSelectionTimeoutMS: 5000 // Pagkalipas ng 5 segundo, mag-reconnect agad imbes na mag-freeze
+    });
+    isConnected = true;
+    console.log('✅ Connected na tayo sa MongoDB Atlas!');
+  } catch (err) {
+    console.error('❌ Oops, may error sa koneksyon:', err);
+    throw err;
+  }
+};
 
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   trackingNumber: { type: String, unique: true },
@@ -32,6 +48,8 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
 
 app.post('/api/transactions', async (req, res) => {
   try {
+    await connectDB(); // Siguraduhing gising ang koneksyon bago mag-bilang at mag-save
+
     const ngayon = new Date();
     const taon = ngayon.getFullYear();
     const buwan = String(ngayon.getMonth() + 1).padStart(2, '0'); 
@@ -61,6 +79,8 @@ app.post('/api/transactions', async (req, res) => {
 
 app.get('/api/transactions', async (req, res) => {
   try {
+    await connectDB(); // Siguraduhing gising ang koneksyon bago mag-pull ng listahan
+    
     const list = await Transaction.find().sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: list });
   } catch (error) {
@@ -70,6 +90,8 @@ app.get('/api/transactions', async (req, res) => {
 
 app.put('/api/transactions/:id', async (req, res) => {
   try {
+    await connectDB(); // Siguraduhing gising ang koneksyon bago mag-update ng status
+    
     const updated = await Transaction.findByIdAndUpdate(
       req.params.id,
       { status: req.body.status },
@@ -89,4 +111,3 @@ if (process.env.NODE_ENV !== 'production') {
 }
 
 module.exports = app;
-
