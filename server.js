@@ -86,7 +86,7 @@ app.post('/api/transactions', async (req, res) => {
       createdAt: { $gte: simulaNgAraw, $lte: duloNgAraw }
     });
 
-    const sunodNaBilang = String(bilangNgayon + 1).padStart(4, '0');
+    const sunodNaBilang = String(bilangNgayon + 1).padStart(3, '0');
     const pinalNaTracking = `${datePrefix}-${sunodNaBilang}`;
 
     const transactionData = { ...req.body, trackingNumber: pinalNaTracking, createdAt: new Date() };
