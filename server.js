@@ -79,14 +79,21 @@ const checkAuth = async (req, res, next) => {
 app.post('/api/transactions', async (req, res) => {
   try {
     await connectDB();
-    const ngayon = new Date();
-    const taon = ngayon.getFullYear();
-    const buwan = String(ngayon.getMonth() + 1).padStart(2, '0'); 
-    const araw = String(ngayon.getDate()).padStart(2, '0');      
+    
+    // PHT Timezone Fix (UTC +8)
+    const serverNgayon = new Date();
+    const phtOffset = 8 * 60 * 60 * 1000; // 8 hours in milliseconds
+    const phtDate = new Date(serverNgayon.getTime() + phtOffset);
+
+    // Get PHT date details using UTC methods to avoid server locale issues
+    const taon = phtDate.getUTCFullYear();
+    const buwan = String(phtDate.getUTCMonth() + 1).padStart(2, '0'); 
+    const araw = String(phtDate.getUTCDate()).padStart(2, '0');      
     const datePrefix = `${taon}${buwan}${araw}`; 
 
-    const simulaNgAraw = new Date(ngayon.setHours(0,0,0,0));
-    const duloNgAraw = new Date(ngayon.setHours(23,59,59,999));
+    // Convert exact PHT midnight boundaries back to UTC for accurate MongoDB querying
+    const simulaNgAraw = new Date(Date.UTC(taon, phtDate.getUTCMonth(), phtDate.getUTCDate()) - phtOffset);
+    const duloNgAraw = new Date(simulaNgAraw.getTime() + (24 * 60 * 60 * 1000) - 1);
 
     const bilangNgayon = await Transaction.countDocuments({
       createdAt: { $gte: simulaNgAraw, $lte: duloNgAraw }
@@ -95,6 +102,8 @@ app.post('/api/transactions', async (req, res) => {
     const sunodNaBilang = String(bilangNgayon + 1).padStart(3, '0');
     const pinalNaTracking = `${datePrefix}-${sunodNaBilang}`;
 
+    // Note: createdAt naturally saves in UTC, which is correct for MongoDB standards. 
+    // The frontend converts it back to local time when displaying.
     const transactionData = { ...req.body, trackingNumber: pinalNaTracking, createdAt: new Date() };
     const newTx = new Transaction(transactionData);
     const saved = await newTx.save();
