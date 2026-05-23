@@ -23,7 +23,7 @@ const connectDB = async () => {
   }
 };
 
-// 1. Transaction Schema
+// 1. Transaction Schema (May kasama nang assistedBy)
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   trackingNumber: { type: String, unique: true },
   firstName: { type: String, required: true },
@@ -35,7 +35,13 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   dateNeeded: { type: String, default: '' },
   urgency: { type: String, default: 'Regular' },
   status: { type: String, default: 'Pending' },
+  assistedBy: { type: String, default: '' }, // 👈 Idinagdag para sa nag-assist na staff
   createdAt: { type: Date, default: Date.now }
+}));
+
+// 1.5 Staff/Assistant Schema (Para sa permanenteng listahan ng mga Staff)
+const Assistant = mongoose.model('Assistant', new mongoose.Schema({
+  name: { type: String, required: true, unique: true }
 }));
 
 // 2. Admin System Schema (Para dito i-save ang PIN nang ligtas)
@@ -151,6 +157,51 @@ app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
     await connectDB();
     await SystemConfig.findOneAndUpdate({ key: 'admin_config' }, { adminPin: newPin });
     res.status(200).json({ success: true, message: "PIN updated successfully!" });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 👥 PUBLIC: Kuhanin ang listahan ng staff para sa dropdown ni Teacher
+app.get('/api/assistants', async (req, res) => {
+  try {
+    await connectDB();
+    const list = await Assistant.find({});
+    const names = list.map(ast => ast.name);
+    res.status(200).json({ success: true, data: names });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ➕ PROTECTED: Magdagdag ng bagong staff sa database (Admin Only)
+app.post('/api/assistants', checkAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: "Pangalan ay kinakailangan." });
+
+    await connectDB();
+    // Gagamit ng upsert para kung sakaling ma-double click, hindi magka-crash ang server
+    await Assistant.findOneAndUpdate({ name: name.trim() }, { name: name.trim() }, { upsert: true, new: true });
+
+    const updatedList = await Assistant.find({});
+    res.status(200).json({ success: true, data: updatedList.map(ast => ast.name) });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ❌ PROTECTED: Magbura ng staff sa database (Admin Only)
+app.post('/api/assistants/remove', checkAuth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: "Pangalan ay kinakailangan." });
+
+    await connectDB();
+    await Assistant.deleteOne({ name: name.trim() });
+
+    const updatedList = await Assistant.find({});
+    res.status(200).json({ success: true, data: updatedList.map(ast => ast.name) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
