@@ -23,7 +23,7 @@ const connectDB = async () => {
   }
 };
 
-// 1. Transaction Schema (May kasama nang assistedBy)
+// 1. Transaction Schema
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   trackingNumber: { type: String, unique: true },
   firstName: { type: String, required: true },
@@ -35,22 +35,28 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   dateNeeded: { type: String, default: '' },
   urgency: { type: String, default: 'Regular' },
   status: { type: String, default: 'Pending' },
-  assistedBy: { type: String, default: '' }, // 👈 Idinagdag para sa nag-assist na staff
+  assistedBy: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now }
 }));
 
-// 1.5 Staff/Assistant Schema (Para sa permanenteng listahan ng mga Staff)
+// 1.5 Staff/Assistant Schema
 const Assistant = mongoose.model('Assistant', new mongoose.Schema({
   name: { type: String, required: true, unique: true }
 }));
 
-// 2. Admin System Schema (Para dito i-save ang PIN nang ligtas)
-const SystemConfig = mongoose.model('SystemConfig', new mongoose.Schema({
-  key: { type: String, default: 'admin_config' },
-  adminPin: { type: String, default: '1234' } // Default PIN sa unang takbo
+// 1.6 DYNAMIC PURPOSE SCHEMA (Added for Dynamic Control)
+const Purpose = mongoose.model('Purpose', new mongoose.Schema({
+  name: { type: String, required: true },
+  subPurposes: [String]
 }));
 
-// MIDDLEWARE: Dito tsetsekin ng server kung tama ang pin na pinasa ng phone/laptop mo
+// 2. Admin System Schema
+const SystemConfig = mongoose.model('SystemConfig', new mongoose.Schema({
+  key: { type: String, default: 'admin_config' },
+  adminPin: { type: String, default: '1234' }
+}));
+
+// MIDDLEWARE
 const checkAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -79,31 +85,20 @@ const checkAuth = async (req, res, next) => {
 app.post('/api/transactions', async (req, res) => {
   try {
     await connectDB();
-    
-    // PHT Timezone Fix (UTC +8)
     const serverNgayon = new Date();
-    const phtOffset = 8 * 60 * 60 * 1000; // 8 hours in milliseconds
+    const phtOffset = 8 * 60 * 60 * 1000;
     const phtDate = new Date(serverNgayon.getTime() + phtOffset);
-
-    // Get PHT date details using UTC methods to avoid server locale issues
     const taon = phtDate.getUTCFullYear();
     const buwan = String(phtDate.getUTCMonth() + 1).padStart(2, '0'); 
     const araw = String(phtDate.getUTCDate()).padStart(2, '0');      
     const datePrefix = `${taon}${buwan}${araw}`; 
-
-    // Convert exact PHT midnight boundaries back to UTC for accurate MongoDB querying
     const simulaNgAraw = new Date(Date.UTC(taon, phtDate.getUTCMonth(), phtDate.getUTCDate()) - phtOffset);
     const duloNgAraw = new Date(simulaNgAraw.getTime() + (24 * 60 * 60 * 1000) - 1);
 
-    const bilangNgayon = await Transaction.countDocuments({
-      createdAt: { $gte: simulaNgAraw, $lte: duloNgAraw }
-    });
-
+    const bilangNgayon = await Transaction.countDocuments({ createdAt: { $gte: simulaNgAraw, $lte: duloNgAraw } });
     const sunodNaBilang = String(bilangNgayon + 1).padStart(3, '0');
     const pinalNaTracking = `${datePrefix}-${sunodNaBilang}`;
 
-    // Note: createdAt naturally saves in UTC, which is correct for MongoDB standards. 
-    // The frontend converts it back to local time when displaying.
     const transactionData = { ...req.body, trackingNumber: pinalNaTracking, createdAt: new Date() };
     const newTx = new Transaction(transactionData);
     const saved = await newTx.save();
@@ -127,18 +122,14 @@ app.get('/api/transactions', checkAuth, async (req, res) => {
 // ⚙️ PROTECTED: Update Status
 app.put('/api/transactions/:id', checkAuth, async (req, res) => {
   try {
-    const updated = await Transaction.findByIdAndUpdate(
-      req.params.id,
-      { status: req.body.status },
-      { new: true }
-    );
+    const updated = await Transaction.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
 });
 
-// 🔑 PUBLIC: Verify PIN (Para sa Login ng Frontend)
+// 🔑 PUBLIC: Verify PIN
 app.post('/api/admin/verify-pin', async (req, res) => {
   try {
     await connectDB();
@@ -156,7 +147,7 @@ app.post('/api/admin/verify-pin', async (req, res) => {
   }
 });
 
-// 🔒 PROTECTED: Change PIN sa Database (Sync sa lahat ng device)
+// 🔒 PROTECTED: Change PIN
 app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
   try {
     const { newPin } = req.body;
@@ -171,49 +162,67 @@ app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
   }
 });
 
-// 👥 PUBLIC: Kuhanin ang listahan ng staff para sa dropdown ni Teacher
+// 👥 PUBLIC: Get Assistants
 app.get('/api/assistants', async (req, res) => {
   try {
     await connectDB();
     const list = await Assistant.find({});
-    const names = list.map(ast => ast.name);
-    res.status(200).json({ success: true, data: names });
+    res.status(200).json({ success: true, data: list.map(ast => ast.name) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// ➕ PROTECTED: Magdagdag ng bagong staff sa database (Admin Only)
+// ➕ PROTECTED: Add Assistant
 app.post('/api/assistants', checkAuth, async (req, res) => {
   try {
     const { name } = req.body;
-    if (!name) return res.status(400).json({ success: false, message: "Pangalan ay kinakailangan." });
-
     await connectDB();
-    // Gagamit ng upsert para kung sakaling ma-double click, hindi magka-crash ang server
     await Assistant.findOneAndUpdate({ name: name.trim() }, { name: name.trim() }, { upsert: true, new: true });
-
-    const updatedList = await Assistant.find({});
-    res.status(200).json({ success: true, data: updatedList.map(ast => ast.name) });
+    const list = await Assistant.find({});
+    res.status(200).json({ success: true, data: list.map(ast => ast.name) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// ❌ PROTECTED: Magbura ng staff sa database (Admin Only)
+// ❌ PROTECTED: Remove Assistant
 app.post('/api/assistants/remove', checkAuth, async (req, res) => {
   try {
     const { name } = req.body;
-    if (!name) return res.status(400).json({ success: false, message: "Pangalan ay kinakailangan." });
-
     await connectDB();
     await Assistant.deleteOne({ name: name.trim() });
-
-    const updatedList = await Assistant.find({});
-    res.status(200).json({ success: true, data: updatedList.map(ast => ast.name) });
+    const list = await Assistant.find({});
+    res.status(200).json({ success: true, data: list.map(ast => ast.name) });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
+});
+
+// 🆕 DYNAMIC PURPOSES API
+app.get('/api/purposes', async (req, res) => {
+  try {
+    await connectDB();
+    const list = await Purpose.find();
+    res.status(200).json({ success: true, data: list });
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
+});
+
+app.post('/api/purposes', checkAuth, async (req, res) => {
+  try {
+    await connectDB();
+    const { name, subPurposes } = req.body;
+    await Purpose.create({ name, subPurposes });
+    res.status(200).json({ success: true, message: "Added successfully" });
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
+});
+
+app.delete('/api/purposes/:id', checkAuth, async (req, res) => {
+  try {
+    await connectDB();
+    await Purpose.findByIdAndDelete(req.params.id);
+    res.status(200).json({ success: true, message: "Deleted successfully" });
+  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
 });
 
 if (process.env.NODE_ENV !== 'production') {
