@@ -1,6 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const bcrypt = require('bcryptjs'); // 🔒 Idinagdag para sa secure hashing
 
 const app = express();
 
@@ -50,13 +51,13 @@ const Purpose = mongoose.model('Purpose', new mongoose.Schema({
   subPurposes: [String]
 }));
 
-// 2. Admin System Schema
+// 2. Admin System Schema (Pinalitan ang default pin ng hashed version ng '1234')
 const SystemConfig = mongoose.model('SystemConfig', new mongoose.Schema({
   key: { type: String, default: 'admin_config' },
-  adminPin: { type: String, default: '1234' }
+  adminPin: { type: String, default: '$2a$10$X7vH7WlBqGZzJbUjP/f6duz0K3PuxN6f6FmN1GfHwFv3.Nf7SveKO' } 
 }));
 
-// MIDDLEWARE
+// MIDDLEWARE (🔒 Secure Version gamit ang bcrypt.compare)
 const checkAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
@@ -67,10 +68,16 @@ const checkAuth = async (req, res, next) => {
     await connectDB();
     let config = await SystemConfig.findOne({ key: 'admin_config' });
     if (!config) {
-      config = await SystemConfig.create({ key: 'admin_config', adminPin: '1234' });
+      // Kung wala pang config, i-save ang default '1234' na naka-hash na agad
+      config = await SystemConfig.create({ 
+        key: 'admin_config', 
+        adminPin: '$2a$10$X7vH7WlBqGZzJbUjP/f6duz0K3PuxN6f6FmN1GfHwFv3.Nf7SveKO' 
+      });
     }
 
-    if (token !== config.adminPin) {
+    // Ikumpara ang plain text token sa naka-hash na PIN sa DB
+    const isMatch = await bcrypt.compare(token, config.adminPin);
+    if (!isMatch) {
       return res.status(401).json({ success: false, message: '🔒 Unauthorized!' });
     }
     next();
@@ -129,15 +136,22 @@ app.put('/api/transactions/:id', checkAuth, async (req, res) => {
   }
 });
 
-// 🔑 PUBLIC: Verify PIN
+// 🔑 PUBLIC: Verify PIN (🔒 Secure Version gamit ang bcrypt.compare)
 app.post('/api/admin/verify-pin', async (req, res) => {
   try {
     await connectDB();
     const { pin } = req.body;
     let config = await SystemConfig.findOne({ key: 'admin_config' });
-    if (!config) config = await SystemConfig.create({ key: 'admin_config', adminPin: '1234' });
+    if (!config) {
+      config = await SystemConfig.create({ 
+        key: 'admin_config', 
+        adminPin: '$2a$10$X7vH7WlBqGZzJbUjP/f6duz0K3PuxN6f6FmN1GfHwFv3.Nf7SveKO' 
+      });
+    }
 
-    if (pin === config.adminPin) {
+    // Ligtas na ikumpara ang input PIN sa nakatagong hash sa MongoDB
+    const isMatch = await bcrypt.compare(pin, config.adminPin);
+    if (isMatch) {
       res.status(200).json({ success: true, message: "Valid PIN" });
     } else {
       res.status(401).json({ success: false, message: "Maling PIN!" });
@@ -147,7 +161,7 @@ app.post('/api/admin/verify-pin', async (req, res) => {
   }
 });
 
-// 🔒 PROTECTED: Change PIN
+// 🔒 PROTECTED: Change PIN (🔒 Secure Version gamit ang bcrypt.hash)
 app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
   try {
     const { newPin } = req.body;
@@ -155,7 +169,13 @@ app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
       return res.status(400).json({ success: false, message: "Dapat kahit 4 digits ang PIN." });
     }
     await connectDB();
-    await SystemConfig.findOneAndUpdate({ key: 'admin_config' }, { adminPin: newPin });
+    
+    // 1. I-hash ang bagong PIN bago ihulog sa database
+    const saltRounds = 10;
+    const hashedPin = await bcrypt.hash(newPin, saltRounds);
+
+    // 2. I-save ang secure hashed pin
+    await SystemConfig.findOneAndUpdate({ key: 'admin_config' }, { adminPin: hashedPin });
     res.status(200).json({ success: true, message: "PIN updated successfully!" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
