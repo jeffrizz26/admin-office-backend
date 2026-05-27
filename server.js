@@ -23,7 +23,7 @@ const connectDB = async () => {
   }
 };
 
-// 1. Transaction Schema
+// 1. Transaction Schema (INAYOS ANG SYNTAX BUG DITO)
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   trackingNumber: { type: String, unique: true },
   firstName: { type: String, required: true },
@@ -36,8 +36,9 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   urgency: { type: String, default: 'Regular' },
   status: { type: String, default: 'Pending' },
   assistedBy: { type: String, default: '' },
-  createdAt: { type: Date, default: Date.now }
-}));
+  createdAt: { type: Date, default: Date.now },
+  equipmentName: { type: String, required: false, default: "" }
+}, { timestamps: true })); // <-- Koma (,) at pagsasara ng tama ang inilagay dito!
 
 // 1.5 Staff/Assistant Schema
 const Assistant = mongoose.model('Assistant', new mongoose.Schema({
@@ -99,7 +100,19 @@ app.post('/api/transactions', async (req, res) => {
     const sunodNaBilang = String(bilangNgayon + 1).padStart(3, '0');
     const pinalNaTracking = `${datePrefix}-${sunodNaBilang}`;
 
-    const transactionData = { ...req.body, trackingNumber: pinalNaTracking, createdAt: new Date() };
+    // Safety Clean-up: I-save lang ang equipmentName kapag tama ang purpose, kung hindi, gawing blanko.
+    let finalEquipmentName = req.body.equipmentName || "";
+    if (req.body.purpose !== "Request Supply / Equipment") {
+      finalEquipmentName = "";
+    }
+
+    const transactionData = { 
+      ...req.body, 
+      equipmentName: finalEquipmentName,
+      trackingNumber: pinalNaTracking, 
+      createdAt: new Date() 
+    };
+
     const newTx = new Transaction(transactionData);
     const saved = await newTx.save();
     
@@ -112,6 +125,7 @@ app.post('/api/transactions', async (req, res) => {
 // 📊 PROTECTED: Get All Transactions
 app.get('/api/transactions', checkAuth, async (req, res) => {
   try {
+    await connectDB(); // Siguraduhing konektado bago mag-fetch
     const list = await Transaction.find().sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: list });
   } catch (error) {
@@ -122,6 +136,7 @@ app.get('/api/transactions', checkAuth, async (req, res) => {
 // ⚙️ PROTECTED: Update Status
 app.put('/api/transactions/:id', checkAuth, async (req, res) => {
   try {
+    await connectDB(); // Siguraduhing konektado bago mag-update
     const updated = await Transaction.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
