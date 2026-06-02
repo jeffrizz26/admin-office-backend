@@ -1,14 +1,28 @@
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const cloudinary = require('cloudinary').v2;
 
 const app = express();
 
-app.use(cors());
+// ✅ CORS SETUP
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
+
 app.use(express.json());
 
-const MONGO_URI = process.env.MONGO_URI;
+// Cloudinary Configuration
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
 
+const MONGO_URI = process.env.MONGO_URI;
 let isConnected = false;
 
 const connectDB = async () => {
@@ -23,7 +37,8 @@ const connectDB = async () => {
   }
 };
 
-// 1. Transaction Schema (INAYOS ANG SYNTAX BUG DITO)
+// ==================== DATABASE SCHEMAS ====================
+// Sinasalo nito lahat ng posibleng hula ng Vibe Coding frontend mo para walang tapon!
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   trackingNumber: { type: String, unique: true },
   firstName: { type: String, required: true },
@@ -37,33 +52,34 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   status: { type: String, default: 'Pending' },
   assistedBy: { type: String, default: '' },
   createdAt: { type: Date, default: Date.now },
-  equipmentName: { type: String, required: false, default: "" }
-}, { timestamps: true })); // <-- Koma (,) at pagsasara ng tama ang inilagay dito!
+  equipmentName: { type: String, required: false, default: "" },
+  
+  // 📥 MGA SALUHAN NG ATTACHMENT NI TEACHER
+  secureFileId: { type: String, default: "" },  
+  fileName: { type: String, default: "" },      
+  teacherAttachmentUrl: { type: String, default: "" },
+  teacherAttachmentName: { type: String, default: "" },
+  teacherFileId: { type: String, default: "" },
+  teacherFileName: { type: String, default: "" },
 
-// 1.5 Staff/Assistant Schema
-const Assistant = mongoose.model('Assistant', new mongoose.Schema({
-  name: { type: String, required: true, unique: true }
-}));
+  // 📤 PARA NAMAN KAY ADMIN (Para sa download ni teacher mamaya)
+  adminFileId: { type: String, default: "" },  
+  adminFileName: { type: String, default: "" },      
+  teacherPin: { type: String, default: "" }     
+}, { timestamps: true }));
 
-// 1.6 DYNAMIC PURPOSE SCHEMA (Added for Dynamic Control)
-const Purpose = mongoose.model('Purpose', new mongoose.Schema({
-  name: { type: String, required: true },
-  subPurposes: [String]
-}));
-
-// 2. Admin System Schema
 const SystemConfig = mongoose.model('SystemConfig', new mongoose.Schema({
   key: { type: String, default: 'admin_config' },
   adminPin: { type: String, default: '1234' }
 }));
 
-// MIDDLEWARE
+// ==================== SECURITY MIDDLEWARE ====================
 const checkAuth = async (req, res, next) => {
   try {
     const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-    
-    if (!token) return res.status(401).json({ success: false, message: '🔒 No token provided!' });
+    if (!authHeader) return res.status(401).json({ success: false, message: '🔒 No token provided!' });
+
+    const token = authHeader.startsWith('Bearer ') ? authHeader.split(' ')[1] : authHeader;
     
     await connectDB();
     let config = await SystemConfig.findOne({ key: 'admin_config' });
@@ -80,9 +96,9 @@ const checkAuth = async (req, res, next) => {
   }
 };
 
-// ==================== ENDPOINTS ====================
+// ==================== SYSTEM ENDPOINTS ====================
 
-// 📄 PUBLIC: Submit Transaction
+// 1. TEACHER SUBMIT REQUEST (Sinasalo lahat ng variations ng file fields)
 app.post('/api/transactions', async (req, res) => {
   try {
     await connectDB();
@@ -100,17 +116,29 @@ app.post('/api/transactions', async (req, res) => {
     const sunodNaBilang = String(bilangNgayon + 1).padStart(3, '0');
     const pinalNaTracking = `${datePrefix}-${sunodNaBilang}`;
 
-    // Safety Clean-up: I-save lang ang equipmentName kapag tama ang purpose, kung hindi, gawing blanko.
     let finalEquipmentName = req.body.equipmentName || "";
     if (req.body.purpose !== "Request Supply / Equipment") {
       finalEquipmentName = "";
     }
 
+    // Alin man ang ipadala ng frontend mo, mapupuno lahat ng fields na ito para walang mintis!
+    const pinalNaFileId = req.body.secureFileId || req.body.teacherAttachmentUrl || req.body.teacherFileId || "";
+    const pinalNaFileName = req.body.fileName || req.body.teacherAttachmentName || req.body.teacherFileName || "";
+
     const transactionData = { 
       ...req.body, 
       equipmentName: finalEquipmentName,
       trackingNumber: pinalNaTracking, 
-      createdAt: new Date() 
+      createdAt: new Date(),
+      
+      // I-populate lahat para kahit alin ang basahin ng UI table mo, may makikitang link!
+      secureFileId: pinalNaFileId,
+      teacherAttachmentUrl: pinalNaFileId,
+      teacherFileId: pinalNaFileId,
+      
+      fileName: pinalNaFileName,
+      teacherAttachmentName: pinalNaFileName,
+      teacherFileName: pinalNaFileName
     };
 
     const newTx = new Transaction(transactionData);
@@ -122,10 +150,10 @@ app.post('/api/transactions', async (req, res) => {
   }
 });
 
-// 📊 PROTECTED: Get All Transactions
+// 2. KUNIN ANG LAHAT NG TRANSAKSYON (ADMIN DASHBOARD)
 app.get('/api/transactions', checkAuth, async (req, res) => {
   try {
-    await connectDB(); // Siguraduhing konektado bago mag-fetch
+    await connectDB();
     const list = await Transaction.find().sort({ createdAt: -1 });
     res.status(200).json({ success: true, data: list });
   } catch (error) {
@@ -133,18 +161,63 @@ app.get('/api/transactions', checkAuth, async (req, res) => {
   }
 });
 
-// ⚙️ PROTECTED: Update Status
+// 3. MAG-UPDATE NG STATUS (ADMIN ACTION - SAFE FROM OVERWRITING TEACHER FILES)
 app.put('/api/transactions/:id', checkAuth, async (req, res) => {
   try {
-    await connectDB(); // Siguraduhing konektado bago mag-update
-    const updated = await Transaction.findByIdAndUpdate(req.params.id, { status: req.body.status }, { new: true });
+    await connectDB();
+    
+    const kasalukuyangTx = await Transaction.findById(req.params.id);
+    if (!kasalukuyangTx) {
+      return res.status(404).json({ success: false, message: "Transaction not found" });
+    }
+
+    // Kapag nag-update si admin, isave natin ang file ni admin sa hiwalay na field (`adminFileId`)
+    // para hindi masira o mabura ang file fields ni teacher sa itaas
+    const updateData = {
+      status: req.body.status,
+      adminFileId: req.body.secureFileId || kasalukuyangTx.adminFileId || "",
+      adminFileName: req.body.fileName || kasalukuyangTx.adminFileName || "",
+      teacherPin: req.body.teacherPin || kasalukuyangTx.teacherPin || ""
+    };
+
+    const updated = await Transaction.findByIdAndUpdate(req.params.id, updateData, { new: true });
     res.status(200).json({ success: true, data: updated });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
   }
 });
 
-// 🔑 PUBLIC: Verify PIN
+// 4. DOWNLOAD ROUTE PARA KAY TEACHER (Kukunin ang file na galing kay Admin)
+app.post('/api/transactions/secure-download', async (req, res) => {
+  try {
+    const { trackingNumber, teacherPin } = req.body;
+    await connectDB();
+
+    const tx = await Transaction.findOne({ trackingNumber });
+    if (!tx) {
+      return res.status(404).json({ success: false, message: "Maling Tracking Number!" });
+    }
+    if (!tx.adminFileId) {
+      return res.status(400).json({ success: false, message: "Wala pang file para sa request na ito." });
+    }
+
+    if (tx.teacherPin !== teacherPin) {
+      return res.status(403).json({ success: false, message: "Maling Guro! Hindi tugma ang PIN." });
+    }
+
+    return res.json({
+      success: true,
+      downloadUrl: tx.adminFileId,
+      fileName: tx.adminFileName
+    });
+
+  } catch (error) {
+    console.error("Secure Download Error:", error);
+    res.status(500).json({ success: false, message: "Server Error sa pag-download." });
+  }
+});
+
+// 5. ADMIN VERIFY LOGIN PIN
 app.post('/api/admin/verify-pin', async (req, res) => {
   try {
     await connectDB();
@@ -162,87 +235,5 @@ app.post('/api/admin/verify-pin', async (req, res) => {
   }
 });
 
-// 🔒 PROTECTED: Change PIN
-app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
-  try {
-    const { newPin } = req.body;
-    if (!newPin || newPin.length < 4) {
-      return res.status(400).json({ success: false, message: "Dapat kahit 4 digits ang PIN." });
-    }
-    await connectDB();
-    await SystemConfig.findOneAndUpdate({ key: 'admin_config' }, { adminPin: newPin });
-    res.status(200).json({ success: true, message: "PIN updated successfully!" });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// 👥 PUBLIC: Get Assistants
-app.get('/api/assistants', async (req, res) => {
-  try {
-    await connectDB();
-    const list = await Assistant.find({});
-    res.status(200).json({ success: true, data: list.map(ast => ast.name) });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ➕ PROTECTED: Add Assistant
-app.post('/api/assistants', checkAuth, async (req, res) => {
-  try {
-    const { name } = req.body;
-    await connectDB();
-    await Assistant.findOneAndUpdate({ name: name.trim() }, { name: name.trim() }, { upsert: true, new: true });
-    const list = await Assistant.find({});
-    res.status(200).json({ success: true, data: list.map(ast => ast.name) });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// ❌ PROTECTED: Remove Assistant
-app.post('/api/assistants/remove', checkAuth, async (req, res) => {
-  try {
-    const { name } = req.body;
-    await connectDB();
-    await Assistant.deleteOne({ name: name.trim() });
-    const list = await Assistant.find({});
-    res.status(200).json({ success: true, data: list.map(ast => ast.name) });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-});
-
-// 🆕 DYNAMIC PURPOSES API
-app.get('/api/purposes', async (req, res) => {
-  try {
-    await connectDB();
-    const list = await Purpose.find();
-    res.status(200).json({ success: true, data: list });
-  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
-});
-
-app.post('/api/purposes', checkAuth, async (req, res) => {
-  try {
-    await connectDB();
-    const { name, subPurposes } = req.body;
-    await Purpose.create({ name, subPurposes });
-    res.status(200).json({ success: true, message: "Added successfully" });
-  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
-});
-
-app.delete('/api/purposes/:id', checkAuth, async (req, res) => {
-  try {
-    await connectDB();
-    await Purpose.findByIdAndDelete(req.params.id);
-    res.status(200).json({ success: true, message: "Deleted successfully" });
-  } catch (error) { res.status(500).json({ success: false, message: error.message }); }
-});
-
-if (process.env.NODE_ENV !== 'production') {
-  const PORT = process.env.PORT || 5000;
-  app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
-}
-
-module.exports = app;
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
