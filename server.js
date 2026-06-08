@@ -2,7 +2,6 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const cloudinary = require('cloudinary').v2;
 
 const app = express();
 
@@ -14,13 +13,6 @@ app.use(cors({
 }));
 
 app.use(express.json());
-
-// Cloudinary Configuration
-cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET
-});
 
 const MONGO_URI = process.env.MONGO_URI;
 let isConnected = false;
@@ -38,7 +30,6 @@ const connectDB = async () => {
 };
 
 // ==================== DATABASE SCHEMAS ====================
-// Sinasalo nito lahat ng posibleng hula ng Vibe Coding frontend mo para walang tapon!
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   trackingNumber: { type: String, unique: true },
   firstName: { type: String, required: true },
@@ -54,6 +45,9 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   equipmentName: { type: String, required: false, default: "" },
   
+  // 🔄 EQUIPMENT RETURN STATUS
+  equipmentReturned: { type: Boolean, default: false },
+  
   // 📥 MGA SALUHAN NG ATTACHMENT NI TEACHER
   secureFileId: { type: String, default: "" },  
   fileName: { type: String, default: "" },      
@@ -62,11 +56,16 @@ const Transaction = mongoose.model('Transaction', new mongoose.Schema({
   teacherFileId: { type: String, default: "" },
   teacherFileName: { type: String, default: "" },
 
-  // 📤 PARA NAMAN KAY ADMIN (Para sa download ni teacher mamaya)
+  // 📤 PARA NAMAN KAY ADMIN
   adminFileId: { type: String, default: "" },  
   adminFileName: { type: String, default: "" },      
   teacherPin: { type: String, default: "" }     
 }, { timestamps: true }));
+
+// 👥 SCHEMA: Para sa listahan ng mga Staff/Assistants
+const Assistant = mongoose.model('Assistant', new mongoose.Schema({
+  name: { type: String, required: true, unique: true }
+}));
 
 const SystemConfig = mongoose.model('SystemConfig', new mongoose.Schema({
   key: { type: String, default: 'admin_config' },
@@ -96,9 +95,57 @@ const checkAuth = async (req, res, next) => {
   }
 };
 
-// ==================== SYSTEM ENDPOINTS ====================
+// ==================== STAFF/ASSISTANT ENDPOINTS ====================
 
-// 1. TEACHER SUBMIT REQUEST (Sinasalo lahat ng variations ng file fields)
+// A. KUNIN ANG MGA STAFF (Para sa dropdown sa form at listahan sa modal)
+app.get('/api/assistants', async (req, res) => {
+  try {
+    await connectDB();
+    const list = await Assistant.find().sort({ name: 1 });
+    const stringNames = list.map(ast => ast.name);
+    res.status(200).json({ success: true, data: stringNames });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// B. MAGDAGDAG NG BAGONG STAFF
+app.post('/api/assistants', checkAuth, async (req, res) => {
+  try {
+    await connectDB();
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ success: false, message: "Pangalan ay kailangan." });
+
+    const umiiral = await Assistant.findOne({ name });
+    if (!umiiral) {
+      await Assistant.create({ name });
+    }
+
+    const updatedList = await Assistant.find().sort({ name: 1 });
+    res.status(200).json({ success: true, data: updatedList.map(ast => ast.name) });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// C. MAGTANGGAL NG STAFF MULA SA LISTAHAN
+app.post('/api/assistants/remove', checkAuth, async (req, res) => {
+  try {
+    await connectDB();
+    const { name } = req.body;
+    
+    await Assistant.deleteOne({ name });
+
+    const updatedList = await Assistant.find().sort({ name: 1 });
+    res.status(200).json({ success: true, data: updatedList.map(ast => ast.name) });
+  } catch (error) {
+    res.status(400).json({ success: false, message: error.message });
+  }
+});
+
+// ==================== TRANSACTION ENDPOINTS ====================
+
+// 1. TEACHER SUBMIT REQUEST
 app.post('/api/transactions', async (req, res) => {
   try {
     await connectDB();
@@ -121,7 +168,6 @@ app.post('/api/transactions', async (req, res) => {
       finalEquipmentName = "";
     }
 
-    // Alin man ang ipadala ng frontend mo, mapupuno lahat ng fields na ito para walang mintis!
     const pinalNaFileId = req.body.secureFileId || req.body.teacherAttachmentUrl || req.body.teacherFileId || "";
     const pinalNaFileName = req.body.fileName || req.body.teacherAttachmentName || req.body.teacherFileName || "";
 
@@ -131,7 +177,6 @@ app.post('/api/transactions', async (req, res) => {
       trackingNumber: pinalNaTracking, 
       createdAt: new Date(),
       
-      // I-populate lahat para kahit alin ang basahin ng UI table mo, may makikitang link!
       secureFileId: pinalNaFileId,
       teacherAttachmentUrl: pinalNaFileId,
       teacherFileId: pinalNaFileId,
@@ -161,7 +206,12 @@ app.get('/api/transactions', checkAuth, async (req, res) => {
   }
 });
 
-// 3. MAG-UPDATE NG STATUS (ADMIN ACTION - SAFE FROM OVERWRITING TEACHER FILES)
+  // ==================== IMPORTS (Tiyaking nasa pinakataas ng server file mo ito kasama ng iba pang imports) ====================
+const fs = require('fs');
+const path = require('path');
+
+// 3. MAG-UPDATE NG STATUS O EQUIPMENT RETURN (ADMIN ACTION) WITH AUTOMATED CSV LOGGING
+// 3. MAG-UPDATE NG STATUS O EQUIPMENT RETURN (ADMIN ACTION) WITH FULL AUTOMATION
 app.put('/api/transactions/:id', checkAuth, async (req, res) => {
   try {
     await connectDB();
@@ -171,23 +221,63 @@ app.put('/api/transactions/:id', checkAuth, async (req, res) => {
       return res.status(404).json({ success: false, message: "Transaction not found" });
     }
 
-    // Kapag nag-update si admin, isave natin ang file ni admin sa hiwalay na field (`adminFileId`)
-    // para hindi masira o mabura ang file fields ni teacher sa itaas
-    const updateData = {
-      status: req.body.status,
-      adminFileId: req.body.secureFileId || kasalukuyangTx.adminFileId || "",
-      adminFileName: req.body.fileName || kasalukuyangTx.adminFileName || "",
-      teacherPin: req.body.teacherPin || kasalukuyangTx.teacherPin || ""
-    };
+    // DIRECT SPREAD: Saluhin LAHAT ng fields na galing sa frontend request nang walang naiiwan (Status at Returned fields)
+    const updateData = { ...req.body };
 
-    const updated = await Transaction.findByIdAndUpdate(req.params.id, updateData, { new: true });
+    // AUTOMATION OVERRIDE: Kung pinindot ang "Mark as Returned", automatic magiging Done ang status
+    if (req.body.equipmentReturned === true) {
+      updateData.status = 'Done';
+    }
+
+    // Siguraduhing hindi mawawala ang mga existing files at fallbacks mo
+    updateData.adminFileId = req.body.secureFileId || req.body.adminFileId || kasalukuyangTx.adminFileId || "";
+    updateData.adminFileName = req.body.fileName || req.body.adminFileName || kasalukuyangTx.adminFileName || "";
+    updateData.teacherPin = req.body.teacherPin || kasalukuyangTx.teacherPin || "";
+
+    // 1. I-save nang buo sa MongoDB gamit ang atomic $set operator
+    const updated = await Transaction.findByIdAndUpdate(
+      req.params.id, 
+      { $set: updateData }, 
+      { new: true }
+    );
+
+    // 2. AUTOMATED CSV LOG WRITER (Philippine Time)
+    if (req.body.equipmentReturned === true) {
+      const kasalukuyangOras = new Date();
+      const formattedDate = kasalukuyangOras.toLocaleString('en-US', { timeZone: 'Asia/Manila' });
+
+      const logDir = path.join(__dirname, 'logs');
+      if (!fs.existsSync(logDir)) {
+        fs.mkdirSync(logDir);
+      }
+      const csvFilePath = path.join(logDir, 'returned_items_log.csv');
+
+      const kumpletongPangalan = `${updated.firstName} ${updated.middleName || ''} ${updated.lastName}`.trim().replace(/"/g, '""');
+      const equipment = (updated.equipmentName || 'N/A').replace(/"/g, '""');
+      const staffName = (updated.assistedBy || 'None').replace(/"/g, '""');
+      const tracking = updated.trackingNumber;
+
+      const csvRow = `"${tracking}","${kumpletongPangalan}","${equipment}","${staffName}","Naibalik Na","Done","${formattedDate}"\n`;
+
+      if (!fs.existsSync(csvFilePath)) {
+        const csvHeader = "Tracking No,Full Name,Equipment Name,Assisted By,Return Status,Action Status,Date and Time Returned\n";
+        fs.writeFileSync(csvFilePath, csvHeader);
+      }
+
+      fs.appendFileSync(csvFilePath, csvRow);
+      console.log(`📝 [CSV AUTOMATION SUCCESS]: Recorded for ${tracking}`);
+    }
+
+    // Ibalik ang pinakasariwang data sa iyong React Frontend
     res.status(200).json({ success: true, data: updated });
+
   } catch (error) {
-    res.status(400).json({ success: false, message: error.message });
+    console.error("❌ Backend Update Error:", error);
+    res.status(500).json({ success: false, message: error.message });
   }
 });
 
-// 4. DOWNLOAD ROUTE PARA KAY TEACHER (Kukunin ang file na galing kay Admin)
+// 4. DOWNLOAD ROUTE PARA KAY TEACHER
 app.post('/api/transactions/secure-download', async (req, res) => {
   try {
     const { trackingNumber, teacherPin } = req.body;
@@ -230,6 +320,25 @@ app.post('/api/admin/verify-pin', async (req, res) => {
     } else {
       res.status(401).json({ success: false, message: "Maling PIN!" });
     }
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// 6. ADMIN CHANGE PIN
+app.post('/api/admin/change-pin', checkAuth, async (req, res) => {
+  try {
+    await connectDB();
+    const { newPin } = req.body;
+    if (!newPin) return res.status(400).json({ success: false, message: "New PIN required" });
+
+    await SystemConfig.findOneAndUpdate(
+      { key: 'admin_config' },
+      { $set: { adminPin: newPin } },
+      { new: true, upsert: true }
+    );
+
+    res.status(200).json({ success: true, message: "PIN changed successfully" });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
