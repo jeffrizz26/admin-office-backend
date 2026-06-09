@@ -27,7 +27,7 @@ const connectDB = async () => {
     console.error('❌ MongoDB Connection Error:', err);
     throw err;
   }
-};
+}; 
 
 // ==================== DATABASE SCHEMAS ====================
 const Transaction = mongoose.model('Transaction', new mongoose.Schema({
